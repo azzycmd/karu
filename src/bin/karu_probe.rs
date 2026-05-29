@@ -3,12 +3,14 @@ use serde_json::json;
 use std::time::Duration;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 
+const DEFAULT_WS_URL: &str = "wss://karu-tx61.onrender.com";
+
 #[tokio::main]
 async fn main() {
     let url = std::env::args()
         .nth(1)
         .or_else(|| std::env::var("KARU_WS_URL").ok())
-        .unwrap_or_else(|| "ws://localhost:8765".to_string());
+        .unwrap_or_else(|| DEFAULT_WS_URL.to_string());
 
     println!("conectando em {url}");
 

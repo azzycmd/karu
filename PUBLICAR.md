@@ -9,13 +9,14 @@ KARU_HOST=0.0.0.0 KARU_PORT=8765 python3 server.py
 Em hospedagens como Render, a mesma porta tambem responde `GET`/`HEAD` com
 `Karu online`, entao os health checks HTTP nao quebram o WebSocket.
 
-O cliente desktop usa `KARU_WS_URL`. Local continua igual:
+O cliente desktop conecta por padrao em `wss://karu-tx61.onrender.com`.
+Local continua simples:
 
 ```bash
 cargo run
 ```
 
-Para conectar em um servidor publico:
+Para trocar o servidor manualmente, use `KARU_WS_URL`:
 
 ```bash
 KARU_WS_URL=wss://SEU-SERVIDOR cargo run
@@ -46,13 +47,13 @@ Tem que voltar `HTTP/2 200` ou `HTTP/1.1 200`.
 Depois teste uma versao Rust reduzida, sem UI:
 
 ```bash
-cargo run --bin karu_probe -- wss://SEU-SERVIDOR.onrender.com
+cargo run --bin karu_probe
 ```
 
 Para testar login tambem:
 
 ```bash
-KARU_USER=seu_usuario KARU_PASS=sua_senha cargo run --bin karu_probe -- wss://SEU-SERVIDOR.onrender.com
+KARU_USER=seu_usuario KARU_PASS=sua_senha cargo run --bin karu_probe
 ```
 
 Se o probe conecta e a UI nao, o problema esta no cliente desktop. Se o probe

@@ -41,6 +41,7 @@ const PFP_DIR: &str = "pfps";
 const STATUS_WIDTH: f32 = 260.0;
 const AVATAR_CACHE_SIZE: u32 = 96;
 const LIMITE_HISTORICO_LOCAL: usize = 80;
+const DEFAULT_WS_URL: &str = "wss://karu-tx61.onrender.com";
 
 const FONTE_BOLD: Font = Font {
     family: font::Family::Name("CaskaydiaCove Nerd Font Mono"),
@@ -1130,8 +1131,7 @@ impl Application for Karu {
                 input_password: pash::Password(String::new()),
                 status_erro: String::new(),
                 status_conexao: "conectando ws".to_string(),
-                ws_url: std::env::var("KARU_WS_URL")
-                    .unwrap_or_else(|_| "ws://localhost:8765".to_string()),
+                ws_url: std::env::var("KARU_WS_URL").unwrap_or_else(|_| DEFAULT_WS_URL.to_string()),
                 input_value: String::new(),
                 historico_chat: Vec::new(),
                 canais: vec!["geral".to_string(), "dev".to_string(), "ajuda".to_string()],
@@ -1437,8 +1437,8 @@ impl Application for Karu {
             std::any::TypeId::of::<NetworkConnection>(),
             100,
             |mut output| async move {
-                let url = std::env::var("KARU_WS_URL")
-                    .unwrap_or_else(|_| "ws://localhost:8765".to_string());
+                let url =
+                    std::env::var("KARU_WS_URL").unwrap_or_else(|_| DEFAULT_WS_URL.to_string());
 
                 match connect_async(&url).await {
                     Ok((stream, _)) => {
