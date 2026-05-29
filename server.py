@@ -1,8 +1,8 @@
 import asyncio
-import websockets
 import json
 import os
 import bcrypt  # Biblioteca para hash de senhas seguro
+from aiohttp import WSMsgType, web
 from datetime import datetime
 
 ARQUIVO_HISTORICO = "chat.json"
@@ -110,7 +110,7 @@ async def salvador_historico_periodico():
 async def enviar_lista_usuarios(canal):
     if canal in canais:
         lista_usuarios = []
-        for ws in canais[canal]["users"]:
+        for ws in list(canais[canal]["users"]):
             if ws in clients:
                 username = clients[ws]["username"]
                 lista_usuarios.append({
@@ -118,25 +118,28 @@ async def enviar_lista_usuarios(canal):
                     "pfp": usuarios_cadastrados.get(username, {}).get("pfp", ""),
                 })
         payload = json.dumps({"type": "user_list", "users": lista_usuarios})
-        for ws in canais[canal]["users"]:
-            try: await ws.send(payload)
+        for ws in list(canais[canal]["users"]):
+            try: await ws.send_str(payload)
             except: pass
 
 async def broadcast_para_canal(canal, payload, remetente_ws=None):
     if canal in canais:
-        for client in canais[canal]["users"]:
+        for client in list(canais[canal]["users"]):
             if client != remetente_ws:
-                try: await client.send(payload)
+                try: await client.send_str(payload)
                 except: pass
 
 # --- MANIPULADOR DE CONEXÕES ---
-async def chat_handler(websocket):
+async def websocket_handler(websocket):
     clients[websocket] = {"username": "random", "canal": "geral", "autenticado": False, "pfp": ""}
     canais["geral"]["users"].add(websocket)
     
     try:
         async for message in websocket:
-            data = json.loads(message)
+            if message.type != WSMsgType.TEXT:
+                continue
+
+            data = json.loads(message.data)
             user_info = clients[websocket]
             
             # --- NOVO: REGISTRO DE CONTA ---
@@ -146,11 +149,11 @@ async def chat_handler(websocket):
                 password = data["password"]
                 
                 if username in usuarios_cadastrados:
-                    await websocket.send(json.dumps({"type": "auth_response", "success": False, "msg": "Usuário já existe!"}))
+                    await websocket.send_str(json.dumps({"type": "auth_response", "success": False, "msg": "Usuário já existe!"}))
                 else:
                     salvar_usuario_no_disco(username, email, password)
                     print(f"[SERVER] Nova conta criada: {username} ({email})")
-                    await websocket.send(json.dumps({"type": "auth_response", "success": True, "msg": "Conta criada! Faça login."}))
+                    await websocket.send_str(json.dumps({"type": "auth_response", "success": True, "msg": "Conta criada! Faça login."}))
                 continue
 
             # --- CORRIGIDO: LOGIN COM VALIDAÇÃO DE SENHA ---
@@ -165,17 +168,17 @@ async def chat_handler(websocket):
                     print(f"\n[SERVER] Autenticado com sucesso: {username}")
                     
                     # Envia resposta de sucesso para o cliente destravar a tela
-                    await websocket.send(json.dumps({"type": "auth_response", "success": True, "msg": "Login aceito"}))
+                    await websocket.send_str(json.dumps({"type": "auth_response", "success": True, "msg": "Login aceito"}))
                     
                     # Envia o histórico
                     for msg_antiga in canais["geral"]["historico"]:
-                        await websocket.send(json.dumps(msg_antiga))
+                        await websocket.send_str(json.dumps(msg_antiga))
                     
                     await enviar_lista_usuarios("geral")
                     boas_vindas = json.dumps({"type": "system", "msg": f"{username} entrou no chat!"})
                     await broadcast_para_canal("geral", boas_vindas, websocket)
                 else:
-                    await websocket.send(json.dumps({"type": "auth_response", "success": False, "msg": "Senha ou usuário incorretos!"}))
+                    await websocket.send_str(json.dumps({"type": "auth_response", "success": False, "msg": "Senha ou usuário incorretos!"}))
                 continue
 
             # Bloqueia qualquer engraçadinho que tente mandar msg sem logar
@@ -197,7 +200,7 @@ async def chat_handler(websocket):
                 user_info["canal"] = novo_canal
                 
                 for msg_antiga in canais[novo_canal]["historico"]:
-                    await websocket.send(json.dumps(msg_antiga))
+                    await websocket.send_str(json.dumps(msg_antiga))
                 await enviar_lista_usuarios(novo_canal)
                 continue
 
@@ -212,14 +215,14 @@ async def chat_handler(websocket):
                     or ";base64," not in pfp
                     or len(pfp) > 1_400_000
                 ):
-                    await websocket.send(json.dumps({"type": "system", "msg": "PFP inválida ou grande demais."}))
+                    await websocket.send_str(json.dumps({"type": "system", "msg": "PFP inválida ou grande demais."}))
                     continue
 
                 usuarios_cadastrados.setdefault(username, {})["pfp"] = pfp
                 user_info["pfp"] = pfp
                 salvar_usuarios_no_disco()
 
-                await websocket.send(json.dumps({"type": "system", "msg": "PFP salva no servidor."}))
+                await websocket.send_str(json.dumps({"type": "system", "msg": "PFP salva no servidor."}))
                 await enviar_lista_usuarios(user_info["canal"])
                 continue
 
@@ -246,7 +249,7 @@ async def chat_handler(websocket):
                 await broadcast_para_canal(canal_atual, json.dumps(msg_payload))
                 await asyncio.sleep(0)
 
-    except websockets.exceptions.ConnectionClosed:
+    except ConnectionResetError:
         pass
     finally:
         if websocket in clients:
@@ -258,20 +261,48 @@ async def chat_handler(websocket):
             if user_info["autenticado"]:
                 await enviar_lista_usuarios(canal_atual)
 
-async def main():
+async def chat_handler(request):
+    websocket = web.WebSocketResponse(heartbeat=20)
+    if not websocket.can_prepare(request).ok:
+        return web.Response(text="Karu online\n")
+
+    await websocket.prepare(request)
+    await websocket_handler(websocket)
+    return websocket
+
+async def iniciar_app(app):
     carregar_usuarios()
     carregar_historico_do_disco()
+    app["tarefa_salvar"] = asyncio.create_task(salvador_historico_periodico())
+
+async def parar_app(app):
+    tarefa_salvar = app["tarefa_salvar"]
+    tarefa_salvar.cancel()
+    try:
+        await tarefa_salvar
+    except asyncio.CancelledError:
+        pass
+
+    if historico_sujo:
+        salvar_historico_no_disco()
+
+def criar_app():
+    app = web.Application()
+    app.router.add_route("*", "/", chat_handler)
+    app.router.add_route("*", "/healthz", chat_handler)
+    app.on_startup.append(iniciar_app)
+    app.on_cleanup.append(parar_app)
+    return app
+
+def main():
     host = os.environ.get("KARU_HOST", "0.0.0.0")
     porta = int(os.environ.get("KARU_PORT", os.environ.get("PORT", "8765")))
-    tarefa_salvar = asyncio.create_task(salvador_historico_periodico())
+    print(f"Servidor Karu Seguro rodando em ws://{host}:{porta}")
     try:
-        async with websockets.serve(chat_handler, host, porta, ping_interval=20):
-            print(f"Servidor Karu Seguro rodando em ws://{host}:{porta}")
-            await asyncio.Future()
+        web.run_app(criar_app(), host=host, port=porta, print=None)
     finally:
-        tarefa_salvar.cancel()
         if historico_sujo:
             salvar_historico_no_disco()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
