@@ -192,6 +192,8 @@ struct Karu {
     input_email: String,
     input_password: pash::Password,
     status_erro: String,
+    status_conexao: String,
+    ws_url: String,
     input_value: String,
     historico_chat: Vec<String>,
     canais: Vec<String>,
@@ -212,6 +214,8 @@ enum Message {
     InputAlterado(String),
     EnviarMensagem,
     ConexaoPronta(Option<Arc<Mutex<WsSender>>>),
+    ConexaoFalhou(String),
+    ConexaoEncerrada(String),
     MensagemRecebida(String),
     MudarCanal(String),
 }
@@ -511,6 +515,15 @@ impl Karu {
             .font(FONTE_MONO)
             .style(iced::theme::Text::Color(KARU_MUTED));
 
+        let status_conexao = text(format!("{} :: {}", self.status_conexao, self.ws_url))
+            .size(12)
+            .font(FONTE_MONO)
+            .style(iced::theme::Text::Color(if self.conexao_tx.is_some() {
+                KARU_GREEN
+            } else {
+                KARU_MUTED_DARK
+            }));
+
         let btn_login_estilo = if *aba == SubTelaAuth::Login {
             iced::theme::Button::Primary
         } else {
@@ -594,6 +607,7 @@ impl Karu {
             column![
                 titulo,
                 subtitulo,
+                status_conexao,
                 seletor_abas,
                 formulario,
                 botao_confirmar,
@@ -1108,6 +1122,9 @@ impl Application for Karu {
                 input_email: String::new(),
                 input_password: pash::Password(String::new()),
                 status_erro: String::new(),
+                status_conexao: "conectando ws".to_string(),
+                ws_url: std::env::var("KARU_WS_URL")
+                    .unwrap_or_else(|_| "ws://localhost:8765".to_string()),
                 input_value: String::new(),
                 historico_chat: Vec::new(),
                 canais: vec!["geral".to_string(), "dev".to_string(), "ajuda".to_string()],
@@ -1179,11 +1196,21 @@ impl Application for Karu {
                     return Command::perform(
                         async move {
                             let mut sender = tx_clone.lock().await;
-                            let _ = sender.send(WsMessage::Text(payload)).await;
+                            sender
+                                .send(WsMessage::Text(payload))
+                                .await
+                                .map_err(|erro| erro.to_string())
                         },
-                        |_| Message::InputAlterado("".to_string()),
+                        |resultado| match resultado {
+                            Ok(()) => Message::InputAlterado("".to_string()),
+                            Err(erro) => {
+                                Message::ConexaoFalhou(format!("Falha ao enviar auth: {}", erro))
+                            }
+                        },
                     );
                 }
+
+                self.status_erro = format!("Sem conexão WebSocket em {}", self.ws_url);
             }
 
             Message::InputAlterado(val) => {
@@ -1263,7 +1290,28 @@ impl Application for Karu {
             }
 
             Message::ConexaoPronta(tx) => {
+                self.status_conexao = if tx.is_some() {
+                    "ws conectado".to_string()
+                } else {
+                    "ws offline".to_string()
+                };
                 self.conexao_tx = tx;
+            }
+
+            Message::ConexaoFalhou(erro) => {
+                self.conexao_tx = None;
+                self.status_conexao = "ws falhou".to_string();
+                self.status_erro = erro;
+            }
+
+            Message::ConexaoEncerrada(motivo) => {
+                self.conexao_tx = None;
+                self.status_conexao = "ws desconectado".to_string();
+                if matches!(self.tela, TelaAtual::Autenticacao(_)) {
+                    self.status_erro = motivo;
+                } else {
+                    self.historico_chat.push(format!("[SISTEMA] {}", motivo));
+                }
             }
 
             Message::MensagemRecebida(raw_json) => {
@@ -1379,17 +1427,50 @@ impl Application for Karu {
             |mut output| async move {
                 let url = std::env::var("KARU_WS_URL")
                     .unwrap_or_else(|_| "ws://localhost:8765".to_string());
-                if let Ok((stream, _)) = connect_async(url).await {
-                    let (tx, mut rx) = stream.split();
-                    let tx_protegido = Arc::new(Mutex::new(tx));
-                    let _ = output
-                        .send(Message::ConexaoPronta(Some(tx_protegido)))
-                        .await;
 
-                    while let Some(Ok(msg)) = rx.next().await {
-                        if let WsMessage::Text(txt) = msg {
-                            let _ = output.send(Message::MensagemRecebida(txt)).await;
+                match connect_async(&url).await {
+                    Ok((stream, _)) => {
+                        let (tx, mut rx) = stream.split();
+                        let tx_protegido = Arc::new(Mutex::new(tx));
+                        let _ = output
+                            .send(Message::ConexaoPronta(Some(tx_protegido)))
+                            .await;
+
+                        while let Some(resultado) = rx.next().await {
+                            match resultado {
+                                Ok(WsMessage::Text(txt)) => {
+                                    let _ = output.send(Message::MensagemRecebida(txt)).await;
+                                }
+                                Ok(WsMessage::Close(frame)) => {
+                                    let motivo = frame
+                                        .map(|f| f.reason.to_string())
+                                        .filter(|reason| !reason.is_empty())
+                                        .unwrap_or_else(|| {
+                                            "servidor fechou o websocket".to_string()
+                                        });
+                                    let _ = output.send(Message::ConexaoEncerrada(motivo)).await;
+                                    break;
+                                }
+                                Ok(_) => {}
+                                Err(erro) => {
+                                    let _ = output
+                                        .send(Message::ConexaoEncerrada(format!(
+                                            "WebSocket caiu: {}",
+                                            erro
+                                        )))
+                                        .await;
+                                    break;
+                                }
+                            }
                         }
+                    }
+                    Err(erro) => {
+                        let _ = output
+                            .send(Message::ConexaoFalhou(format!(
+                                "Não conectou em {}: {}",
+                                url, erro
+                            )))
+                            .await;
                     }
                 }
                 let _ = output.send(Message::ConexaoPronta(None)).await;

@@ -21,6 +21,31 @@ Para conectar em um servidor publico:
 KARU_WS_URL=wss://SEU-SERVIDOR cargo run
 ```
 
+## Diagnostico
+
+Teste primeiro o health check HTTP do servidor:
+
+```bash
+curl -I https://SEU-SERVIDOR.onrender.com/
+```
+
+Tem que voltar `HTTP/2 200` ou `HTTP/1.1 200`.
+
+Depois teste uma versao Rust reduzida, sem UI:
+
+```bash
+cargo run --bin karu_probe -- wss://SEU-SERVIDOR.onrender.com
+```
+
+Para testar login tambem:
+
+```bash
+KARU_USER=seu_usuario KARU_PASS=sua_senha cargo run --bin karu_probe -- wss://SEU-SERVIDOR.onrender.com
+```
+
+Se o probe conecta e a UI nao, o problema esta no cliente desktop. Se o probe
+nao conecta, o problema esta na URL, no deploy ou no servidor.
+
 ## Render Free
 
 1. Suba este projeto para um repositorio GitHub.
