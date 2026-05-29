@@ -40,7 +40,7 @@ const KARU_YELLOW: iced::Color = iced::Color::from_rgb(0.965, 0.757, 0.435); // 
 const PFP_DIR: &str = "pfps";
 const STATUS_WIDTH: f32 = 260.0;
 const AVATAR_CACHE_SIZE: u32 = 96;
-const LIMITE_HISTORICO_LOCAL: usize = 200;
+const LIMITE_HISTORICO_LOCAL: usize = 80;
 
 const FONTE_BOLD: Font = Font {
     family: font::Family::Name("CaskaydiaCove Nerd Font Mono"),
@@ -1095,6 +1095,13 @@ impl Karu {
     }
 
     fn view_chat(&self) -> Element<'_, Message> {
+        if std::env::var("KARU_UI_LITE").is_ok() {
+            return column![self.view_channel_topbar(), self.view_chat_center()]
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into();
+        }
+
         column![
             self.view_channel_topbar(),
             row![self.view_chat_center(), self.view_status_panel()]
@@ -1341,10 +1348,12 @@ impl Application for Karu {
                             time,
                         } => {
                             if let Some(pfp) = pfp {
-                                if let Some(handle) = avatar_handle_de_data_url(&pfp) {
-                                    self.pfp_handles.insert(user.clone(), handle);
+                                if self.pfps.get(&user) != Some(&pfp) {
+                                    if let Some(handle) = avatar_handle_de_data_url(&pfp) {
+                                        self.pfp_handles.insert(user.clone(), handle);
+                                    }
+                                    self.pfps.insert(user.clone(), pfp);
                                 }
-                                self.pfps.insert(user.clone(), pfp);
                             }
                             let formatado = if let Some(time) = time {
                                 format!("[{}|{}]: {}", user, time, msg)
@@ -1357,10 +1366,13 @@ impl Application for Karu {
                         ChatProtocol::UserList { users } => {
                             for perfil in &users {
                                 if let Some(pfp) = &perfil.pfp {
-                                    if let Some(handle) = avatar_handle_de_data_url(pfp) {
-                                        self.pfp_handles.insert(perfil.username.clone(), handle);
+                                    if self.pfps.get(&perfil.username) != Some(pfp) {
+                                        if let Some(handle) = avatar_handle_de_data_url(pfp) {
+                                            self.pfp_handles
+                                                .insert(perfil.username.clone(), handle);
+                                        }
+                                        self.pfps.insert(perfil.username.clone(), pfp.clone());
                                     }
-                                    self.pfps.insert(perfil.username.clone(), pfp.clone());
                                 }
                             }
                             self.usuarios_online = users;

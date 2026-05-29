@@ -7,8 +7,9 @@ from datetime import datetime
 
 ARQUIVO_HISTORICO = "chat.json"
 ARQUIVO_USUARIOS = "usuarios.json"  # Novo arquivo para guardar contas protegidas
-LIMITE_HISTORICO_POR_CANAL = 200
+LIMITE_HISTORICO_POR_CANAL = 80
 INTERVALO_SALVAR_HISTORICO = 1.0
+LIMITE_TEXTO_MENSAGEM = 4000
 
 canais = {
     "geral": {"users": set(), "historico": []},
@@ -80,13 +81,20 @@ def verificar_senha(username, password_puro):
 
 # --- SISTEMA DE HISTÓRICO ---
 def carregar_historico_do_disco():
+    global historico_sujo
     if os.path.exists(ARQUIVO_HISTORICO):
         try:
             with open(ARQUIVO_HISTORICO, "r", encoding="utf-8") as f:
                 dados_salvos = json.load(f)
                 for canal, msgs in dados_salvos.items():
                     if canal in canais:
-                        canais[canal]["historico"] = msgs[-LIMITE_HISTORICO_POR_CANAL:]
+                        historico = []
+                        for msg in msgs[-LIMITE_HISTORICO_POR_CANAL:]:
+                            if isinstance(msg, dict):
+                                if msg.pop("pfp", None) is not None:
+                                    historico_sujo = True
+                                historico.append(msg)
+                        canais[canal]["historico"] = historico
         except Exception as e:
             print(f"[SERVER] Erro ao ler histórico: {e}")
 
@@ -229,11 +237,12 @@ async def websocket_handler(websocket):
             # --- MENSAGEM DE CHAT ---
             if data["type"] == "chat":
                 canal_atual = user_info["canal"]
+                texto_msg = str(data.get("msg", ""))[:LIMITE_TEXTO_MENSAGEM]
                 msg_payload = {
                     "type": "chat",
                     "user": user_info["username"],
-                    "msg": data["msg"],
-                    "pfp": usuarios_cadastrados.get(user_info["username"], {}).get("pfp", ""),
+                    "msg": texto_msg,
+                    "pfp": None,
                     "time": datetime.now().strftime("%H:%M"),
                 }
                 
@@ -243,7 +252,7 @@ async def websocket_handler(websocket):
                     del canais[canal_atual]["historico"][:excedente]
                 marcar_historico_sujo()
                 
-                print(f"\r\x1b[2K[#{canal_atual}][{user_info['username']}]: {data['msg']}")
+                print(f"\r\x1b[2K[#{canal_atual}][{user_info['username']}]: {texto_msg}")
                 print("Mensagem global > ", end="", flush=True)
                 
                 await broadcast_para_canal(canal_atual, json.dumps(msg_payload))

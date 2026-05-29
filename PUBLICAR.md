@@ -21,6 +21,18 @@ Para conectar em um servidor publico:
 KARU_WS_URL=wss://SEU-SERVIDOR cargo run
 ```
 
+Para usar a UI mais fluida, prefira build release:
+
+```bash
+KARU_WS_URL=wss://SEU-SERVIDOR cargo run --release
+```
+
+Se ainda travar, rode sem o painel lateral pesado:
+
+```bash
+KARU_UI_LITE=1 KARU_WS_URL=wss://SEU-SERVIDOR cargo run --release
+```
+
 ## Diagnostico
 
 Teste primeiro o health check HTTP do servidor:
